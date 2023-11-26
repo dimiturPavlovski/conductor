@@ -46,18 +46,26 @@ class WorkflowAndTaskConfigurationSpec extends AbstractSpecification {
     def WORKFLOW_WITH_OPTIONAL_TASK = 'optional_task_wf'
 
     @Shared
+    def WORKFLOW_WITH_EXCLUSIVE_TASK = 'exclusive_task_wf'
+
+    @Shared
+    def WORKFLOW_WITH_EXCLUSIVE_OPTIONAL_TASK = 'exclusive_optional_task_wf'
+
+    @Shared
     def TEST_WORKFLOW = 'integration_test_wf3'
 
     @Shared
     def WAIT_TIME_OUT_WORKFLOW = 'test_wait_timeout'
 
     def setup() {
-        //Register LINEAR_WORKFLOW_T1_T2, TEST_WORKFLOW, RTOWF, WORKFLOW_WITH_OPTIONAL_TASK
+        //Register LINEAR_WORKFLOW_T1_T2, TEST_WORKFLOW, RTOWF, WORKFLOW_WITH_OPTIONAL_TASK, WORKFLOW_WITH_EXCLUSIVE_TASK, WORKFLOW_WITH_EXCLUSIVE_OPTIONAL_TASK
         workflowTestUtil.registerWorkflows(
                 'simple_workflow_1_integration_test.json',
                 'simple_workflow_1_input_template_integration_test.json',
                 'simple_workflow_3_integration_test.json',
                 'simple_workflow_with_optional_task_integration_test.json',
+                'simple_workflow_with_exclusive_task_integration_test.json',
+                'simple_workflow_with_exclusive_optional_task_integration_test.json',
                 'simple_wait_task_workflow_integration_test.json')
     }
 
@@ -104,6 +112,156 @@ class WorkflowAndTaskConfigurationSpec extends AbstractSpecification {
         }
 
         when: "Poll the optional task again and do not complete it and run decide"
+        workflowExecutionService.poll('task_optional', 'task1.integration.worker')
+        Thread.sleep(5000)
+        workflowExecutor.decide(workflowInstanceId)
+
+        then: "Ensure that the workflow is updated"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 3
+            tasks[1].status == Task.Status.COMPLETED_WITH_ERRORS
+            tasks[1].taskType == 'task_optional'
+            tasks[2].status == Task.Status.SCHEDULED
+            tasks[2].taskType == 'integration_task_2'
+        }
+
+        when: "The second task 'integration_task_2' is polled and completed"
+        def task2Try1 = workflowTestUtil.pollAndCompleteTask('integration_task_2', 'task2.integration.worker')
+
+        then: "Verify that the task was polled and acknowledged"
+        verifyPolledAndAcknowledgedTask(task2Try1)
+
+        and: "Ensure that the workflow is in completed state"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.COMPLETED
+            tasks.size() == 3
+            tasks[2].status == Task.Status.COMPLETED
+            tasks[2].taskType == 'integration_task_2'
+        }
+    }
+
+    def "Test simple workflow which has an exclusive task"() {
+
+        given: "A input parameters for a workflow with an exclusive task"
+        def correlationId = 'integration_test' + UUID.randomUUID().toString()
+        def workflowInput = new HashMap()
+        workflowInput['param1'] = 'p1 value'
+        workflowInput['param2'] = 'p2 value'
+
+        when: "An exclusive task workflow is started"
+        def workflowInstanceId = startWorkflow(WORKFLOW_WITH_EXCLUSIVE_TASK, 1,
+                correlationId, workflowInput,
+                null)
+
+        then: "verify that the workflow has started and the exclusive task is in a scheduled state"
+        workflowInstanceId
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 1
+            tasks[0].status == Task.Status.SCHEDULED
+            tasks[0].taskType == 'task_exclusive'
+        }
+
+        when: "The first exclusive task is polled and failed"
+        Tuple polledAndFailedTaskTry1 = workflowTestUtil.pollAndFailTask('task_exclusive',
+                'task1.integration.worker', 'NETWORK ERROR')
+
+        then: "Verify that the task_exclusive was polled and acknowledged"
+        verifyPolledAndAcknowledgedTask(polledAndFailedTaskTry1)
+
+        when: "A decide is executed on the workflow"
+        workflowExecutor.decide(workflowInstanceId)
+
+        then: "verify that the workflow is still running and the first exclusive task has failed and the retry has kicked in"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 2
+            tasks[0].status == Task.Status.FAILED
+            tasks[0].taskType == 'task_exclusive'
+            tasks[1].status == Task.Status.SCHEDULED
+            tasks[1].taskType == 'task_exclusive'
+        }
+
+        when: "The first exclusive task is polled and failed"
+        Tuple polledAndFailedTaskTry2 = workflowTestUtil.pollAndFailTask('task_exclusive',
+                'task1.integration.worker', 'NETWORK ERROR')
+
+        then: "Verify that the task_exclusive was polled and acknowledged"
+        verifyPolledAndAcknowledgedTask(polledAndFailedTaskTry2)
+
+        workflowExecutor.decide(workflowInstanceId)
+
+        then: "Ensure that the workflow is updated"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 3
+            tasks[1].status == Task.Status.FAILED
+            tasks[1].taskType == 'task_exclusive'
+            tasks[2].status == Task.Status.SCHEDULED
+            tasks[2].taskType == 'integration_task_2'
+        }
+
+        when: "The second task 'integration_task_2' is polled and completed"
+        def task2Try1 = workflowTestUtil.pollAndCompleteTask('integration_task_2', 'task2.integration.worker')
+
+        then: "Verify that the task was polled and acknowledged"
+        verifyPolledAndAcknowledgedTask(task2Try1)
+
+        and: "Ensure that the workflow is in completed state"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.FAILED
+            reasonForIncompletion == "Task ${tasks[0].taskId} failed with status: FAILED and reason: 'NETWORK ERROR'. " +
+                    "Task ${tasks[1].taskId} failed with status: FAILED and reason: 'NETWORK ERROR'"
+            tasks.size() == 3
+            tasks[2].status == Task.Status.COMPLETED
+            tasks[2].taskType == 'integration_task_2'
+        }
+    }
+
+    def "Test simple workflow which has an exclusive optional task"() {
+
+        given: "A input parameters for a workflow with an exclusive optional task"
+        def correlationId = 'integration_test' + UUID.randomUUID().toString()
+        def workflowInput = new HashMap()
+        workflowInput['param1'] = 'p1 value'
+        workflowInput['param2'] = 'p2 value'
+
+        when: "An exclusive optional task workflow is started"
+        def workflowInstanceId = startWorkflow(WORKFLOW_WITH_EXCLUSIVE_OPTIONAL_TASK, 1,
+                correlationId, workflowInput,
+                null)
+
+        then: "verify that the workflow has started and the exclusive optional task is in a scheduled state"
+        workflowInstanceId
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 1
+            tasks[0].status == Task.Status.SCHEDULED
+            tasks[0].taskType == 'task_optional'
+        }
+
+        when: "The first exclusive optional task is polled and failed"
+        Tuple polledAndFailedTaskTry1 = workflowTestUtil.pollAndFailTask('task_optional',
+                'task1.integration.worker', 'NETWORK ERROR')
+
+        then: "Verify that the task_optional was polled and acknowledged"
+        verifyPolledAndAcknowledgedTask(polledAndFailedTaskTry1)
+
+        when: "A decide is executed on the workflow"
+        workflowExecutor.decide(workflowInstanceId)
+
+        then: "verify that the workflow is still running and the first exclusive optional task has failed and the retry has kicked in"
+        with(workflowExecutionService.getExecutionStatus(workflowInstanceId, true)) {
+            status == Workflow.WorkflowStatus.RUNNING
+            tasks.size() == 2
+            tasks[0].status == Task.Status.FAILED
+            tasks[0].taskType == 'task_optional'
+            tasks[1].status == Task.Status.SCHEDULED
+            tasks[1].taskType == 'task_optional'
+        }
+
+        when: "Poll the exclusive optional task again and do not complete it and run decide"
         workflowExecutionService.poll('task_optional', 'task1.integration.worker')
         Thread.sleep(5000)
         workflowExecutor.decide(workflowInstanceId)

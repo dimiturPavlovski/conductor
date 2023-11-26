@@ -44,6 +44,7 @@ import com.netflix.conductor.metrics.Monitors;
 import com.netflix.conductor.model.TaskModel;
 import com.netflix.conductor.model.WorkflowModel;
 
+import static com.netflix.conductor.common.metadata.tasks.TaskType.EXCLUSIVE;
 import static com.netflix.conductor.common.metadata.tasks.TaskType.TERMINATE;
 import static com.netflix.conductor.common.metadata.tasks.TaskType.USER_DEFINED;
 import static com.netflix.conductor.model.TaskModel.Status.*;
@@ -208,7 +209,9 @@ public class DeciderService {
                     executedTaskRefNames.remove(retryTask.get().getReferenceTaskName());
                     outcome.tasksToBeUpdated.add(pendingTask);
                 } else {
-                    pendingTask.setStatus(COMPLETED_WITH_ERRORS);
+                    if(pendingTask.getWorkflowTask().isOptional() || !TaskType.EXCLUSIVE.name().equals(pendingTask.getWorkflowTask().getType())) {
+                        pendingTask.setStatus(COMPLETED_WITH_ERRORS);
+                    }
                 }
             }
 
@@ -254,6 +257,19 @@ public class DeciderService {
         if (hasSuccessfulTerminateTask
                 || (outcome.tasksToBeScheduled.isEmpty() && checkForWorkflowCompletion(workflow))) {
             LOGGER.debug("Marking workflow: {} as complete.", workflow);
+            final List<TaskModel> exclusiveTasksTerminalNonSuccessful =  workflow.getTasks().stream()
+                    .filter(t -> EXCLUSIVE.name().equals(t.getWorkflowTask().getType()))
+                    .filter(t -> !t.getWorkflowTask().isOptional())
+                    .filter(t -> t.getStatus().isTerminal() && !t.getStatus().isSuccessful())
+                    .collect(Collectors.toList());
+            if(!exclusiveTasksTerminalNonSuccessful.isEmpty()) {
+                final String errMsg = exclusiveTasksTerminalNonSuccessful.stream()
+                        .map(t -> String.format(
+                                "Task %s failed with status: %s and reason: '%s'",
+                                t.getTaskId(), t.getStatus(), t.getReasonForIncompletion()))
+                        .collect(Collectors.joining(". "));
+                throw new TerminateWorkflowException(errMsg);
+            }
             outcome.isComplete = true;
         }
 
@@ -439,9 +455,10 @@ public class DeciderService {
             }
             // if we reach here, the task has been completed.
             // Was the task successful in completion?
-            if (!status.isSuccessful()) {
-                return false;
-            }
+            // How tasks completed, shouldn't matter for the contract of "has the workflow completed".
+//            if (!status.isSuccessful()) {
+//                return false;
+//            }
         }
 
         boolean noPendingSchedule =
@@ -529,7 +546,8 @@ public class DeciderService {
         if (!task.getStatus().isRetriable()
                 || TaskType.isBuiltIn(task.getTaskType())
                 || expectedRetryCount <= retryCount) {
-            if (workflowTask != null && workflowTask.isOptional()) {
+            if (workflowTask != null &&
+                    (workflowTask.isOptional() || TaskType.EXCLUSIVE.name().equals(workflowTask.getType()))) {
                 return Optional.empty();
             }
             WorkflowModel.Status status;
