@@ -440,9 +440,7 @@ public class TestDeciderOutcomes {
                 outcome.tasksToBeScheduled.get(0).getReferenceTaskName());
     }
 
-    /**
-     * Similar to {@link #testOptional}
-     */
+    /** Similar to {@link #testOptional} */
     @Test
     public void testExclusive() {
         WorkflowDef def = new WorkflowDef();
@@ -509,8 +507,7 @@ public class TestDeciderOutcomes {
         assertEquals(1, outcome.tasksToBeUpdated.size());
         assertEquals(1, outcome.tasksToBeScheduled.size());
 
-        assertEquals(
-                TaskModel.Status.FAILED, workflow.getTasks().get(0).getStatus());
+        assertEquals(TaskModel.Status.FAILED, workflow.getTasks().get(0).getStatus());
         assertEquals(task1Id, outcome.tasksToBeUpdated.get(0).getTaskId());
         assertEquals(
                 task2.getTaskReferenceName(),

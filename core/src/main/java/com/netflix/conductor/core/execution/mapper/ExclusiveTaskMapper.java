@@ -54,7 +54,7 @@ public class ExclusiveTaskMapper implements TaskMapper {
      * TaskModel}
      *
      * @param taskMapperContext: A wrapper class containing the {@link WorkflowTask}, {@link
-     * WorkflowDef}, {@link WorkflowModel} and a string representation of the TaskId
+     *     WorkflowDef}, {@link WorkflowModel} and a string representation of the TaskId
      * @return a List with just one exclusive task
      * @throws TerminateWorkflowException In case if the task definition does not exist
      */
@@ -96,7 +96,8 @@ public class ExclusiveTaskMapper implements TaskMapper {
         exclusiveTask.setResponseTimeoutSeconds(taskDefinition.getResponseTimeoutSeconds());
         exclusiveTask.setRetriedTaskId(retriedTaskId);
         exclusiveTask.setRateLimitPerFrequency(taskDefinition.getRateLimitPerFrequency());
-        exclusiveTask.setRateLimitFrequencyInSeconds(taskDefinition.getRateLimitFrequencyInSeconds());
+        exclusiveTask.setRateLimitFrequencyInSeconds(
+                taskDefinition.getRateLimitFrequencyInSeconds());
         return List.of(exclusiveTask);
     }
 }
