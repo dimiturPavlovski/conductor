@@ -236,7 +236,7 @@
     },
     "protobufToolsLocator_protoc": {
         "com.google.protobuf:protoc": {
-            "locked": "3.14.0"
+            "locked": "3.21.12"
         }
     },
     "runtimeClasspath": {
